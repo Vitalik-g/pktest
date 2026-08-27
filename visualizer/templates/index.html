@@ -85,8 +85,6 @@
 
   .legend{ margin-top: 22px; font-size: 12px; color: var(--ink-dim); line-height: 1.9; }
   .legend .dot{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; }
-  .legend .line{ display:inline-block; width:16px; height:2px; margin-right:8px; vertical-align: middle; }
-  .legend .line.dashed{ border-top: 2px dashed var(--danger); height:0; }
 
   main{ flex: 1; position: relative; min-width: 0; }
   #graph{ width: 100%; height: 100%; }
@@ -102,12 +100,7 @@
     background: var(--panel); border: 1px solid var(--panel-border);
     border-radius: 6px; padding: 16px; display:none; font-size: 13px;
   }
-  #detail h3{ margin: 0 0 4px; font-family: var(--mono); font-size: 14px; color: var(--accent); word-break: break-all; }
-  #detail .merge-badge{
-    display: inline-block; margin: 0 0 10px; padding: 2px 7px; border-radius: 10px;
-    background: rgba(232,163,61,0.15); border: 1px solid var(--accent-2);
-    color: var(--accent-2); font-family: var(--mono); font-size: 11px;
-  }
+  #detail h3{ margin: 0 0 10px; font-family: var(--mono); font-size: 14px; color: var(--accent); word-break: break-all; }
   #detail .row{ margin-bottom: 8px; }
   #detail .k{ color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
   #detail .v{ font-family: var(--mono); word-break: break-all; }
@@ -156,16 +149,12 @@
       <div class="stat"><span>вузлів</span><span class="v" id="stat-nodes">—</span></div>
       <div class="stat"><span>ребер</span><span class="v" id="stat-edges">—</span></div>
       <div class="stat"><span>сумарно взаємодій</span><span class="v" id="stat-count">—</span></div>
-      <div class="stat"><span>об'єднано дублікатів</span><span class="v" id="stat-merged">—</span></div>
     </div>
 
     <div class="legend">
       <div><span class="dot" style="background:#4fd1c5"></span>вузол-агент (є MAC)</div>
       <div><span class="dot" style="background:#7d93a1"></span>вузол лише за IP</div>
-      <div><span class="line" style="background:#4fd1c5"></span>звичайна взаємодія</div>
-      <div><span class="line dashed"></span>самопетля (об'єднані вузли, що взаємодіяли одне з одним)</div>
       <div>Товщина лінії ∝ кількості взаємодій. Клік по вузлу — деталі.</div>
-      <div>Вузли групуються за label: якщо є hostname — за ним, якщо hostname немає — за IP-адресою. Усі їхні зв'язки підсумовуються, жоден не губиться.</div>
     </div>
   </aside>
 
@@ -179,14 +168,10 @@
     <div id="detail">
       <span class="close" onclick="document.getElementById('detail').style.display='none'">✕</span>
       <h3 id="d-title">—</h3>
-      <div id="d-merge-badge" class="merge-badge" style="display:none">—</div>
       <div class="row"><div class="k">hostname</div><div class="v" id="d-hostname">—</div></div>
       <div class="row"><div class="k">os</div><div class="v" id="d-os">—</div></div>
       <div class="row"><div class="k">ip</div><div class="v" id="d-ips">—</div></div>
       <div class="row"><div class="k">mac</div><div class="v" id="d-macs">—</div></div>
-      <div class="row" id="d-members-row" style="display:none">
-        <div class="k">об'єднані netw_node_id</div><div class="v" id="d-members">—</div>
-      </div>
     </div>
   </main>
 </div>
@@ -224,64 +209,45 @@ async function loadGraph(){
     document.getElementById('stat-nodes').textContent = '0';
     document.getElementById('stat-edges').textContent = '0';
     document.getElementById('stat-count').textContent = '0';
-    document.getElementById('stat-merged').textContent = '0';
     return;
   }
 
   let totalCount = 0;
-  let mergedDuplicates = 0;
   const maxCount = Math.max(...data.edges.map(e => e.count));
 
-  const nodes = new vis.DataSet(data.nodes.map(n => {
-    const mergedExtra = (n.merged_count || 1) - 1;
-    mergedDuplicates += mergedExtra;
-    return {
-      id: n.id,
-      label: n.label,
-      title: (n.hostname || (n.ips[0] || '')) + (mergedExtra > 0 ? ` (об'єднано ${n.merged_count} вузлів)` : ''),
-      shape: 'dot',
-      size: n.is_agent ? 16 : 10,
-      color: {
-        background: n.is_agent ? '#4fd1c5' : '#3a4a56',
-        border: n.is_agent ? '#7ff0e4' : '#5b6b78',
-        highlight: { background: '#e8a33d', border: '#ffcf87' }
-      },
-      font: { color: '#cfe0e8', size: 12, face: 'IBM Plex Mono, monospace' },
-      _raw: n
-    };
-  }));
+  const nodes = new vis.DataSet(data.nodes.map(n => ({
+    id: n.id,
+    label: n.label,
+    title: n.hostname || (n.ips[0] || ''),
+    shape: 'dot',
+    size: n.is_agent ? 16 : 10,
+    color: {
+      background: n.is_agent ? '#4fd1c5' : '#3a4a56',
+      border: n.is_agent ? '#7ff0e4' : '#5b6b78',
+      highlight: { background: '#e8a33d', border: '#ffcf87' }
+    },
+    font: { color: '#cfe0e8', size: 12, face: 'IBM Plex Mono, monospace' },
+    _raw: n
+  })));
 
   const edges = new vis.DataSet(data.edges.map((e, i) => {
     totalCount += e.count;
     const width = 1 + 6 * (e.count / maxCount);
-    const base = {
+    return {
       id: i,
       from: e.from,
       to: e.to,
       width,
-      arrows: 'to',
-      title: `${e.count} з'єднань · ${e.protocols.join(', ')} · порти: ${e.dst_ports.join(', ')}` +
-             (e.self_loop ? ` · самопетля (об'єднані вузли)` : ''),
-      smooth: { type: 'dynamic' }
-    };
-    if (e.self_loop){
-      return {
-        ...base,
-        color: { color: '#d9636c', opacity: 0.6 },
-        dashes: true,
-        selfReference: { size: 24, angle: Math.PI / 4 },
-      };
-    }
-    return {
-      ...base,
       color: { color: protocolColor(e.protocols), opacity: 0.55 },
+      arrows: 'to',
+      title: `${e.count} з'єднань · ${e.protocols.join(', ')} · порти: ${e.dst_ports.join(', ')}`,
+      smooth: { type: 'dynamic' }
     };
   }));
 
   document.getElementById('stat-nodes').textContent = data.nodes.length;
   document.getElementById('stat-edges').textContent = data.edges.length;
   document.getElementById('stat-count').textContent = totalCount.toLocaleString('uk-UA');
-  document.getElementById('stat-merged').textContent = mergedDuplicates.toLocaleString('uk-UA');
 
   const container = document.getElementById('graph');
   const options = {
@@ -306,19 +272,6 @@ async function loadGraph(){
     document.getElementById('d-os').textContent = n.os || '—';
     document.getElementById('d-ips').textContent = (n.ips && n.ips.length) ? n.ips.join(', ') : '—';
     document.getElementById('d-macs').textContent = (n.macs && n.macs.length) ? n.macs.join(', ') : '—';
-
-    const badge = document.getElementById('d-merge-badge');
-    const membersRow = document.getElementById('d-members-row');
-    if (n.merged_count && n.merged_count > 1){
-      badge.style.display = 'inline-block';
-      badge.textContent = `об'єднано ${n.merged_count} дублікатів вузла`;
-      membersRow.style.display = 'block';
-      document.getElementById('d-members').textContent = (n.merged_from || []).join(', ');
-    } else {
-      badge.style.display = 'none';
-      membersRow.style.display = 'none';
-    }
-
     document.getElementById('detail').style.display = 'block';
   });
 }
