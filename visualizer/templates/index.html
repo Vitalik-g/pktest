@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>netgraph — граф мережевої взаємодії</title>
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/styles/vis-network.min.css">
+<style>
+  :root{
+    --bg: #0a0f14;
+    --panel: #0f161d;
+    --panel-border: #1c2733;
+    --ink: #cfe0e8;
+    --ink-dim: #7d93a1;
+    --accent: #4fd1c5;      /* приглушена бірюза - трафік/лінії */
+    --accent-2: #e8a33d;    /* бурштин - акценти/лічильники */
+    --danger: #d9636c;
+    --grid-line: #131b23;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body{
+    background:
+      linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0/40px 40px,
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0/40px 40px,
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    display: flex;
+    flex-direction: column;
+  }
+
+  header{
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    background: rgba(10,15,20,0.9);
+    backdrop-filter: blur(6px);
+    z-index: 5;
+  }
+  header .mark{
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    color: var(--accent);
+  }
+  header .mark::before{ content: "◆ "; color: var(--accent-2); }
+  header .sub{ color: var(--ink-dim); font-size: 13px; font-family: var(--mono); }
+
+  .layout{ flex: 1; display: flex; min-height: 0; }
+
+  aside{
+    width: 300px;
+    border-right: 1px solid var(--panel-border);
+    background: var(--panel);
+    padding: 18px;
+    overflow-y: auto;
+  }
+  .field{ margin-bottom: 18px; }
+  .field label{
+    display:block; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--ink-dim); margin-bottom: 6px;
+  }
+  select, input[type=number]{
+    width: 100%; background: #0a1116; border: 1px solid var(--panel-border);
+    color: var(--ink); padding: 8px 10px; border-radius: 4px; font-family: var(--mono);
+    font-size: 13px;
+  }
+  button.reload{
+    width: 100%; margin-top: 4px; padding: 9px; border-radius: 4px; border: 1px solid var(--accent);
+    background: transparent; color: var(--accent); font-family: var(--mono); font-size: 13px;
+    cursor: pointer; transition: background .15s;
+  }
+  button.reload:hover{ background: rgba(79,209,197,0.12); }
+
+  .stats{ margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--panel-border); }
+  .stat{ display:flex; justify-content: space-between; font-family: var(--mono); font-size: 13px; padding: 4px 0; }
+  .stat .v{ color: var(--accent-2); }
+
+  .legend{ margin-top: 22px; font-size: 12px; color: var(--ink-dim); line-height: 1.9; }
+  .legend .dot{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; }
+  .legend .line{ display:inline-block; width:16px; height:2px; margin-right:8px; vertical-align: middle; }
+  .legend .line.dashed{ border-top: 2px dashed var(--danger); height:0; }
+
+  main{ flex: 1; position: relative; min-width: 0; }
+  #graph{ width: 100%; height: 100%; }
+
+  #empty-state{
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    flex-direction: column; gap: 10px; color: var(--ink-dim); font-family: var(--mono); text-align:center;
+  }
+  #empty-state .big{ font-size: 15px; color: var(--ink); }
+
+  #detail{
+    position:absolute; top: 16px; right: 16px; width: 300px;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 6px; padding: 16px; display:none; font-size: 13px;
+  }
+  #detail h3{ margin: 0 0 4px; font-family: var(--mono); font-size: 14px; color: var(--accent); word-break: break-all; }
+  #detail .merge-badge{
+    display: inline-block; margin: 0 0 10px; padding: 2px 7px; border-radius: 10px;
+    background: rgba(232,163,61,0.15); border: 1px solid var(--accent-2);
+    color: var(--accent-2); font-family: var(--mono); font-size: 11px;
+  }
+  #detail .row{ margin-bottom: 8px; }
+  #detail .k{ color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  #detail .v{ font-family: var(--mono); word-break: break-all; }
+  #detail .close{ position:absolute; top:10px; right:12px; cursor:pointer; color: var(--ink-dim); }
+
+  #loading{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color: var(--ink-dim); font-family: var(--mono); font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="mark">netgraph</span>
+  <span class="sub">карта мережевої взаємодії · packetbeat → elasticsearch → postgresql</span>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="field">
+      <label>Вікно часу</label>
+      <select id="hours">
+        <option value="1">остання година</option>
+        <option value="6">останні 6 годин</option>
+        <option value="24" selected>останні 24 години</option>
+        <option value="72">останні 3 доби</option>
+        <option value="168">останній тиждень</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Протокол</label>
+      <select id="protocol">
+        <option value="">усі</option>
+        <option value="TCP">TCP</option>
+        <option value="UDP">UDP</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Макс. кількість ребер</label>
+      <input type="number" id="limit" value="1500" min="50" max="10000" step="50">
+    </div>
+    <button class="reload" onclick="loadGraph()">↻ оновити граф</button>
+
+    <div class="stats">
+      <div class="stat"><span>вузлів</span><span class="v" id="stat-nodes">—</span></div>
+      <div class="stat"><span>ребер</span><span class="v" id="stat-edges">—</span></div>
+      <div class="stat"><span>сумарно взаємодій</span><span class="v" id="stat-count">—</span></div>
+      <div class="stat"><span>об'єднано дублікатів</span><span class="v" id="stat-merged">—</span></div>
+    </div>
+
+    <div class="legend">
+      <div><span class="dot" style="background:#4fd1c5"></span>вузол-агент (є MAC)</div>
+      <div><span class="dot" style="background:#7d93a1"></span>вузол лише за IP</div>
+      <div><span class="line" style="background:#4fd1c5"></span>звичайна взаємодія</div>
+      <div><span class="line dashed"></span>самопетля (об'єднані вузли, що взаємодіяли одне з одним)</div>
+      <div>Товщина лінії ∝ кількості взаємодій. Клік по вузлу — деталі.</div>
+      <div>Вузли групуються за label: якщо є hostname — за ним, якщо hostname немає — за IP-адресою. Усі їхні зв'язки підсумовуються, жоден не губиться.</div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="graph"></div>
+    <div id="loading">завантаження графа…</div>
+    <div id="empty-state">
+      <div class="big">Даних за обраний період немає</div>
+      <div>Спробуйте розширити вікно часу зліва</div>
+    </div>
+    <div id="detail">
+      <span class="close" onclick="document.getElementById('detail').style.display='none'">✕</span>
+      <h3 id="d-title">—</h3>
+      <div id="d-merge-badge" class="merge-badge" style="display:none">—</div>
+      <div class="row"><div class="k">hostname</div><div class="v" id="d-hostname">—</div></div>
+      <div class="row"><div class="k">os</div><div class="v" id="d-os">—</div></div>
+      <div class="row"><div class="k">ip</div><div class="v" id="d-ips">—</div></div>
+      <div class="row"><div class="k">mac</div><div class="v" id="d-macs">—</div></div>
+      <div class="row" id="d-members-row" style="display:none">
+        <div class="k">об'єднані netw_node_id</div><div class="v" id="d-members">—</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+let network = null;
+
+function protocolColor(protocols){
+  if (protocols && protocols.includes('UDP') && !protocols.includes('TCP')) return '#e8a33d';
+  return '#4fd1c5';
+}
+
+async function loadGraph(){
+  const hours = document.getElementById('hours').value;
+  const protocol = document.getElementById('protocol').value;
+  const limit = document.getElementById('limit').value;
+
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('empty-state').style.display = 'none';
+
+  const params = new URLSearchParams({ hours, limit_edges: limit });
+  if (protocol) params.set('protocol', protocol);
+
+  const resp = await fetch('/api/graph?' + params.toString());
+  const data = await resp.json();
+
+  document.getElementById('loading').style.display = 'none';
+
+  if (!data.nodes.length){
+    document.getElementById('empty-state').style.display = 'flex';
+    document.getElementById('empty-state').querySelector('.big').textContent =
+        data.error ? 'Проблема з даними' : 'Даних за обраний період немає';
+    document.getElementById('empty-state').querySelector('.big').nextElementSibling.textContent =
+        data.error || 'Спробуйте розширити вікно часу зліва';
+    document.getElementById('stat-nodes').textContent = '0';
+    document.getElementById('stat-edges').textContent = '0';
+    document.getElementById('stat-count').textContent = '0';
+    document.getElementById('stat-merged').textContent = '0';
+    return;
+  }
+
+  let totalCount = 0;
+  let mergedDuplicates = 0;
+  const maxCount = Math.max(...data.edges.map(e => e.count));
+
+  const nodes = new vis.DataSet(data.nodes.map(n => {
+    const mergedExtra = (n.merged_count || 1) - 1;
+    mergedDuplicates += mergedExtra;
+    return {
+      id: n.id,
+      label: n.label,
+      title: (n.hostname || (n.ips[0] || '')) + (mergedExtra > 0 ? ` (об'єднано ${n.merged_count} вузлів)` : ''),
+      shape: 'dot',
+      size: n.is_agent ? 16 : 10,
+      color: {
+        background: n.is_agent ? '#4fd1c5' : '#3a4a56',
+        border: n.is_agent ? '#7ff0e4' : '#5b6b78',
+        highlight: { background: '#e8a33d', border: '#ffcf87' }
+      },
+      font: { color: '#cfe0e8', size: 12, face: 'IBM Plex Mono, monospace' },
+      _raw: n
+    };
+  }));
+
+  const edges = new vis.DataSet(data.edges.map((e, i) => {
+    totalCount += e.count;
+    const width = 1 + 6 * (e.count / maxCount);
+    const base = {
+      id: i,
+      from: e.from,
+      to: e.to,
+      width,
+      arrows: 'to',
+      title: `${e.count} з'єднань · ${e.protocols.join(', ')} · порти: ${e.dst_ports.join(', ')}` +
+             (e.self_loop ? ` · самопетля (об'єднані вузли)` : ''),
+      smooth: { type: 'dynamic' }
+    };
+    if (e.self_loop){
+      return {
+        ...base,
+        color: { color: '#d9636c', opacity: 0.6 },
+        dashes: true,
+        selfReference: { size: 24, angle: Math.PI / 4 },
+      };
+    }
+    return {
+      ...base,
+      color: { color: protocolColor(e.protocols), opacity: 0.55 },
+    };
+  }));
+
+  document.getElementById('stat-nodes').textContent = data.nodes.length;
+  document.getElementById('stat-edges').textContent = data.edges.length;
+  document.getElementById('stat-count').textContent = totalCount.toLocaleString('uk-UA');
+  document.getElementById('stat-merged').textContent = mergedDuplicates.toLocaleString('uk-UA');
+
+  const container = document.getElementById('graph');
+  const options = {
+    physics: {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -60, springLength: 120, springConstant: 0.06 },
+      stabilization: { iterations: 200 }
+    },
+    interaction: { hover: true, tooltipDelay: 120 },
+  };
+
+  if (network) network.destroy();
+  network = new vis.Network(container, { nodes, edges }, options);
+
+  network.on('click', async (params) => {
+    if (!params.nodes.length) { document.getElementById('detail').style.display = 'none'; return; }
+    const nodeId = params.nodes[0];
+    const n = data.nodes.find(x => x.id === nodeId);
+    if (!n) return;
+    document.getElementById('d-title').textContent = n.label;
+    document.getElementById('d-hostname').textContent = n.hostname || '—';
+    document.getElementById('d-os').textContent = n.os || '—';
+    document.getElementById('d-ips').textContent = (n.ips && n.ips.length) ? n.ips.join(', ') : '—';
+    document.getElementById('d-macs').textContent = (n.macs && n.macs.length) ? n.macs.join(', ') : '—';
+
+    const badge = document.getElementById('d-merge-badge');
+    const membersRow = document.getElementById('d-members-row');
+    if (n.merged_count && n.merged_count > 1){
+      badge.style.display = 'inline-block';
+      badge.textContent = `об'єднано ${n.merged_count} дублікатів вузла`;
+      membersRow.style.display = 'block';
+      document.getElementById('d-members').textContent = (n.merged_from || []).join(', ');
+    } else {
+      badge.style.display = 'none';
+      membersRow.style.display = 'none';
+    }
+
+    document.getElementById('detail').style.display = 'block';
+  });
+}
+
+loadGraph();
+</script>
+</body>
+</html>
